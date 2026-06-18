@@ -6,29 +6,30 @@ JobFlow is a distributed job execution platform where users submit jobs through 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Next.js Frontend (3000)                  │
-│  Dashboard │ Jobs │ Workers │ History                        │
-└─────────────────┬──────────────────────┬───────────────────┘
-                  │ REST (polling 2.5s)  │
-┌─────────────────▼──────────────────────▼───────────────────┐
-│              Node.js / Express API (4000)                    │
-│                                                              │
-│   /api/jobs      ── submit, list, cancel, retry, stats      │
-│   /api/workers   ── register, heartbeat, deregister         │
-│                                                              │
-│   ┌──────────────────────────────────────────────────────┐  │
-│   │              Scheduler (runs every 2s)               │  │
-│   │  1. Check heartbeats → mark stale workers offline    │  │
-│   │  2. Query queued/retrying jobs (by priority + time)  │  │
-│   │  3. Pair each job with an idle worker → execute()    │  │
-│   └──────────────────────────────────────────────────────┘  │
-│                                                              │
-│   ┌──────────────────────────────────────────────────────┐  │
-│   │              In-Memory Store (Map<id, T>)            │  │
-│   │  jobs: Map<string, Job>                              │  │
-│   │  workers: Map<string, Worker>                        │  │
-│   │  executionHistory: Job[]                             │  │
-│   └──────────────────────────────────────────────────────┘  │
+│                   Next.js Frontend (3000)                   │
+│  Dashboard  │  Jobs  │  Workers  │  History                 │
+└─────────────────┬──────────────────────┬────────────────────┘
+                  │                      │
+                  │ REST Polling (2.5s)  │
+                  │                      │
+┌─────────────────▼──────────────────────▼────────────────────┐
+│              Node.js / Express API (4000)                   │
+│                                                             │
+│   /api/jobs     ── submit, list, cancel, retry, stats       │
+│   /api/workers  ── register, heartbeat, deregister          │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │             Scheduler (runs every 2s)               │   │
+│   │  1. Check heartbeats → mark stale workers offline   │   │
+│   │  2. Query queued/retrying jobs (by priority + time) │   │
+│   │  3. Pair each job with an idle worker → execute()   │   │
+│   └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │            MongoDB Database (Mongoose)              │   │
+│   │  jobs: JobModel (collection: jobs)                  │   │
+│   │  workers: WorkerModel (collection: workers)         │   │
+│   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,26 +39,28 @@ JobFlow is a distributed job execution platform where users submit jobs through 
 
 ### Backend (`/backend`)
 
-| File | Responsibility |
-|------|---------------|
-| `src/index.ts` | Express app bootstrap, seeds 3 demo workers, starts scheduler |
-| `src/types/index.ts` | Shared TypeScript interfaces (Job, Worker, Stats, LogEntry) |
-| `src/db/store.ts` | In-memory Maps acting as the data layer |
-| `src/services/scheduler.ts` | Core engine: job dispatch, simulated execution, heartbeat checker, cancel/retry helpers |
-| `src/routes/jobs.ts` | REST handlers for job CRUD + actions |
-| `src/routes/workers.ts` | REST handlers for worker registration + heartbeat |
+| File                           | Responsibility                                                                        |
+|--------------------------------|---------------------------------------------------------------------------------------|
+| `src/index.ts`                 | Express app bootstrap, seeds demo workers & jobs, starts database and scheduler      |
+| `src/types/index.ts`           | Shared TypeScript interfaces (Job, Worker, Stats, LogEntry)                           |
+| `src/db/connection.ts`         | Manages connection establishment and disconnection with the MongoDB cluster           |
+| `src/db/models.ts`             | Defines Mongoose schemas, virtual options, and model structures                       |
+| `src/db/store.ts`              | Database layer abstraction providing asynchronous data access and queries             |
+| `src/services/scheduler.ts`    | Core engine: job dispatch, simulated execution, heartbeat checker, cancel/retry locks |
+| `src/routes/jobs.ts`           | REST handlers for job CRUD + operations                                               |
+| `src/routes/workers.ts`        | REST handlers for worker registration + heartbeats                                    |
 
 ### Frontend (`/frontend`)
 
-| Path | Purpose |
-|------|---------|
-| `app/layout.tsx` | Root layout with persistent sidebar navigation |
-| `app/page.tsx` | Dashboard — live stats, running jobs, worker status |
-| `app/jobs/page.tsx` | Job table with filters, detail drawer, submit modal |
-| `app/workers/page.tsx` | Worker cards with heartbeat + remove actions |
-| `app/history/page.tsx` | Execution history with aggregate metrics |
-| `components/ui/index.tsx` | Shared UI primitives (Badge, Button, Card, ProgressBar, Spinner) |
-| `lib/api.ts` | Typed fetch wrapper for all API endpoints |
+| Path                       | Purpose                                                          |
+|----------------------------|------------------------------------------------------------------|
+| `app/layout.tsx`           | Root layout with persistent sidebar navigation                   |
+| `app/page.tsx`             | Dashboard — live stats, running jobs, worker status              |
+| `app/jobs/page.tsx`        | Job table with status filters, detail drawer, and submission form|
+| `app/workers/page.tsx`     | Worker cards displaying live heartbeat states and quick removal  |
+| `app/history/page.tsx`     | Execution history of completed and failed jobs                   |
+| `components/ui/index.tsx`  | Shared UI primitives (Badge, Button, Card, ProgressBar, Spinner) |
+| `lib/api.ts`               | Typed fetch client targeting Express API endpoints               |
 
 ---
 
@@ -69,7 +72,7 @@ Jobs carry a `priorityScore` (critical=4, high=3, normal=2, low=1). The schedule
 ### Heartbeat & Crash Recovery
 - Workers send a `POST /api/workers/:id/heartbeat` to stay alive.
 - The scheduler checks heartbeats every 2s. If a worker's last heartbeat is > 15s old, it is marked **offline**.
-- Any job assigned to that crashed worker is immediately moved back to `queued` (if retries remain) or `failed`.
+- Any job assigned to that crashed worker is immediately recovered and moved back to `retrying` (if retries remain) or `failed`.
 
 ### Retry Policy
 - Each job has a configurable `maxRetries` (default 3).
@@ -91,21 +94,33 @@ In production, replace the `executeJob()` simulation with real task runner integ
 
 ```typescript
 Job {
-  id, name, type, payload,
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'retrying',
+  id: string,
+  name: string,
+  type: string,
+  payload: Record<string, any>,
+  status: 'pending' | 'queued' | 'running' | 'completed' | 'failed' | 'retrying',
   priority: 'low' | 'normal' | 'high' | 'critical',
-  priorityScore: 1–4,
-  workerId, createdAt, startedAt, completedAt,
-  progress: 0–100,
-  retryCount, maxRetries,
-  errorMessage, logs: LogEntry[]
+  priorityScore: number, // critical=4, high=3, normal=2, low=1
+  workerId?: string,
+  createdAt: number,
+  startedAt?: number,
+  completedAt?: number,
+  progress: number, // 0-100
+  retryCount: number,
+  maxRetries: number,
+  errorMessage?: string,
+  logs: LogEntry[]
 }
 
 Worker {
-  id, name,
+  id: string,
+  name: string,
   status: 'idle' | 'busy' | 'offline',
-  registeredAt, lastHeartbeat,
-  currentJobId, completedJobs, failedJobs,
+  registeredAt: number,
+  lastHeartbeat: number,
+  currentJobId?: string,
+  completedJobs: number,
+  failedJobs: number,
   tags: string[]
 }
 ```
@@ -114,26 +129,24 @@ Worker {
 
 ## Database Choice
 
-**Current:** In-memory `Map<string, T>` — zero dependencies, instant reads/writes, sufficient for a single-node demo.
+**Current:** MongoDB / Mongoose — persistent, document-based storage that retains state across server restarts and supports complex logging subdocuments.
 
-**Production recommendation: PostgreSQL**
-- Jobs table with index on `(status, priorityScore, createdAt)` for efficient queue queries
-- Workers table with index on `status`
-- Execution history as an append-only audit log
-- Use `pg-boss` or `BullMQ` (Redis) for a production-grade job queue with at-least-once delivery guarantees
+**Production Recommendation:**
+- **Primary Database**: MongoDB Atlas or PostgreSQL with indexed columns on queue queries.
+- **Queue Broker**: BullMQ (Redis-backed) or pg-boss (Postgres-backed) to support distributed locking, at-least-once delivery, and concurrent job popping.
 
 ---
 
 ## Scalability Considerations
 
-| Concern | Current | Production Path |
-|---------|---------|----------------|
-| Job queue | In-memory Map | BullMQ (Redis) or pg-boss (Postgres) |
-| Multiple API instances | Single process | Stateless API + shared queue in Redis/Postgres |
-| Worker isolation | Simulated in-process | Separate worker microservices or k8s Jobs |
-| Real-time updates | 2.5s polling | WebSocket / Server-Sent Events |
-| Persistence | Lost on restart | PostgreSQL with migrations |
-| Auth | None | JWT + RBAC |
+| Concern                 | Current                               | Production Path                                       |
+|-------------------------|---------------------------------------|-------------------------------------------------------|
+| Job Queue               | MongoDB Polling (Indexed queries)     | BullMQ (Redis) or RabbitMQ / Kafka                    |
+| Multiple API Instances  | Stateless handlers + Scheduler         | Shared lock / Redis pub-sub for dispatching           |
+| Worker Isolation        | Simulated in-process execution        | Separate worker container processes (Kubernetes Jobs) |
+| Real-time Updates       | 2.5s Frontend Polling                 | WebSockets or Server-Sent Events (SSE)                |
+| Persistence             | MongoDB collection store              | Sharded production MongoDB cluster or PostgreSQL      |
+| Authentication          | None                                  | JWT-based authentication + Role-Based Access Control  |
 
 ---
 
@@ -143,4 +156,4 @@ Worker {
 2. **Job failure** → retryCount < maxRetries → status = 'retrying' → re-queued next tick
 3. **Exhausted retries** → status = 'failed', error logged, manual retry available via UI
 4. **User cancel** → immediate status = 'failed' with reason, worker freed
-5. **API crash** → state is lost (in-memory); mitigation: persist to DB on every state change
+5. **API crash** → states are safely retained in MongoDB; scheduler recovers running jobs from crashed workers upon bootstrap.
