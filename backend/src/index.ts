@@ -1,7 +1,9 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import jobsRouter from './routes/jobs';
 import workersRouter from './routes/workers';
+import { connectDB } from './db/connection';
 import { startScheduler, registerWorker } from './services/scheduler';
 
 const app = express();
@@ -16,15 +18,36 @@ app.use('/api/workers', workersRouter);
 app.get('/api/health', (_, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
 // Seed demo workers on startup
-function seedDemoWorkers() {
-  registerWorker('Alpha-Worker', ['general', 'compute']);
-  registerWorker('Beta-Worker', ['general', 'ml']);
-  registerWorker('Gamma-Worker', ['io', 'storage']);
-  console.log('[Seed] 3 demo workers registered');
+async function seedDemoWorkers() {
+  try {
+    await registerWorker('Alpha-Worker', ['general', 'compute']);
+    await registerWorker('Beta-Worker', ['general', 'ml']);
+    await registerWorker('Gamma-Worker', ['io', 'storage']);
+    console.log('[Seed] Demo workers registered/updated successfully');
+  } catch (err) {
+    console.error('[Seed] Failed to seed demo workers:', err);
+  }
 }
 
-app.listen(PORT, () => {
-  console.log(`[Server] JobFlow API running on http://localhost:${PORT}`);
-  seedDemoWorkers();
-  startScheduler();
-});
+async function startServer() {
+  try {
+    // Connect to database
+    await connectDB();
+
+    // Start server listening
+    app.listen(PORT, async () => {
+      console.log(`[Server] JobFlow API running on http://localhost:${PORT}`);
+      
+      // Seed demo workers
+      await seedDemoWorkers();
+      
+      // Start scheduler loop
+      startScheduler();
+    });
+  } catch (err) {
+    console.error('[Server] Startup failed:', err);
+    process.exit(1);
+  }
+}
+
+startServer();
