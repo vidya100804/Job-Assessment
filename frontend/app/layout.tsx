@@ -77,7 +77,7 @@ function Sidebar() {
         })}
       </nav>
       <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
-        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>v1.0.0 — Fullstack Assessment</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>v1.0.0</div>
       </div>
     </aside>
   );
