@@ -15,14 +15,14 @@ JobFlow is a distributed job execution platform where users submit jobs through 
 ┌─────────────────▼──────────────────────▼────────────────────┐
 │              Node.js / Express API (4000)                   │
 │                                                             │
-│   /api/jobs     ── submit, list, cancel, retry, stats       │
-│   /api/workers  ── register, heartbeat, deregister          │
+│   /api/jobs     -> submit, list, cancel, retry, stats       │
+│   /api/workers  -> register, heartbeat, deregister          │
 │                                                             │
 │   ┌─────────────────────────────────────────────────────┐   │
 │   │             Scheduler (runs every 2s)               │   │
-│   │  1. Check heartbeats → mark stale workers offline   │   │
+│   │  1. Check heartbeats -> mark stale workers offline  │   │
 │   │  2. Query queued/retrying jobs (by priority + time) │   │
-│   │  3. Pair each job with an idle worker → execute()   │   │
+│   │  3. Pair each job with an idle worker -> execute()  │   │
 │   └─────────────────────────────────────────────────────┘   │
 │                                                             │
 │   ┌─────────────────────────────────────────────────────┐   │
@@ -152,8 +152,8 @@ Worker {
 
 ## Failure Handling Strategies
 
-1. **Worker crash** → heartbeat timeout → mark offline → re-queue running jobs
-2. **Job failure** → retryCount < maxRetries → status = 'retrying' → re-queued next tick
-3. **Exhausted retries** → status = 'failed', error logged, manual retry available via UI
-4. **User cancel** → immediate status = 'failed' with reason, worker freed
-5. **API crash** → states are safely retained in MongoDB; scheduler recovers running jobs from crashed workers upon bootstrap.
+1. **Worker crash** -> heartbeat timeout -> mark offline -> re-queue running jobs
+2. **Job failure** -> retryCount < maxRetries -> status = 'retrying' -> re-queued next tick
+3. **Exhausted retries** -> status = 'failed', error logged, manual retry available via UI
+4. **User cancel** -> immediate status = 'failed' with reason, worker freed
+5. **API crash** -> states are safely retained in MongoDB; scheduler recovers running jobs from crashed workers upon bootstrap.
